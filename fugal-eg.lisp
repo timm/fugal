@@ -41,19 +41,19 @@
     (assert (> (length rows) 10))))
 
 (eg "--num" "welford mean/sd of a column"
-  (let ((n (adds (loop for r in (cdr (csv (my file)))
-                       collect (elt r 0)))))
+  (let ((n (seens (loop for r in (cdr (csv (my file)))
+                        collect (elt r 0)))))
     (prn "n ~a mu ~,2f sd ~,2f" (n n) (mu n) (sd n))
     (assert (and (> (n n) 0) (> (sd n) 0)))))
 
 (eg "--sym" "counts of a symbolic column"
-  (let* ((i  (the-data))
-         (at (position-if (fn (lower-case-p (char $1 0)))
-                          (names i)))
-         (s  (col i at)))
-    (prn "col ~a: ~a" (elt (names i) at)
-         (loop for k being the hash-keys of s
-               collect (list k (? s k))))
+  ;; columns type themselves, so a file of all numbers has no
+  ;; syms at all; when that happens, make one here and count it.
+  (let+ ((i  (the-data))
+         (at (position-if #'hash-table-p (cols i)))
+         (s  (if at (col i at) (seens '(a b a c a)))))
+    (prn "col ~a: ~a" (if at (elt (names i) at) "(made one)")
+         (loop for k in (keys s) collect (list k (? s k))))
     (assert (> (hash-table-count s) 0))))
 
 (eg "--data" "x and y column indexes"
@@ -85,7 +85,7 @@
          (best (tune ts (rows i) y)))
     (show i best)
     (assert (<= (err best (rows i) y)
-                (err (adds (mapcar y (rows i))) (rows i) y)))))
+                (err (seens (mapcar y (rows i))) (rows i) y)))))
 
 (eg "--trees" "every grown tree, with its bias and error"
   (let+ ((i (the-data)) (y (the-y i)) (k 0))

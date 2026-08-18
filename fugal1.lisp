@@ -1,9 +1,11 @@
 ; vim: set ft=lisp lispwords+=fn,let+ :
 ;;;; fugal1.lisp : grow many small trees, keep the best one.
-;;;; Rows are vectors. A column is a num (n mu m2, Welford)
-;;;; or a sym (hash of counts); a data is rows plus one such
-;;;; summary per column. Names say the role: Uppercase=num,
-;;;; trailing +/- = goal (max/min), ! = klass, X = skip.
+;;;; Rows are vectors. Columns make themselves from what they
+;;;; hold: `seen` of a number grows a num (a plist n mu m2 sd,
+;;;; Welford), `seen` of anything else grows a sym (a hash of
+;;;; counts). A data is rows plus one such summary per column.
+;;;; Names say the role: trailing +/- = goal (max/min),
+;;;; ! = klass, X = skip.
 ;;;; y(row) = "distance to heaven": Minkowski gap between the
 ;;;; normalised goals and their ideal 0/1. Each x column is
 ;;;; cut into bins (numbers: 7 bins of the sigmoid'd z-score,
@@ -11,9 +13,10 @@
 ;;;; cut carries a num of the ys under it. A split keeps the
 ;;;; cut with the least (bit 0) or most (bit 1) mean y and
 ;;;; recurses on the rest, so depth d gives <= 2^d trees named
-;;;; by their bits; `tune` keeps the lowest error. Trees are
-;;;; plists (at lo hi left right); leaves are nums. Settings
-;;;; are a plist; -x V on the command line sets key x...
+;;;; by their bits; `tune` keeps the lowest error. Trees and
+;;;; nums are both plists -- (at lo hi left right) for a node,
+;;;; (n mu m2 sd) for a leaf -- so a node is what has an `at`.
+;;;; Settings are a plist; -x V on the command line sets key x...
 (load (merge-pathnames "lib1.lisp" *load-truename*))
 
 (defvar *settings* '(seed 1234567891 p 2 bins 7 depth 4
@@ -21,23 +24,37 @@
 (defmacro my (k) `(? *settings* ',k))            ; (my bins)
 
 ;;; ----- columns ---------------------------------------------
-(defstruct (num (:conc-name) (:constructor num ()))
-  (n 0) (mu 0.0) (m2 0.0))
+;;; nil is the empty column and `seen` returns a new one, so
+;;; callers store what they get back: (setf c (seen c v)).
+(defun n  (i) (? i 'n  0))
+(defun mu (i) (? i 'mu 0))
+(defun sd (i) (? i 'sd 0))
 
-(defun sd (i)
-  (if (< (n i) 2) 0 (sqrt (/ (max 0 (m2 i)) (1- (n i))))))
+(defmethod seen ((i null) &optional (v '?))    ; the first v
+  (if (eq v '?) i                              ; says which
+      (seen (if (numberp v)                    ; column to make
+                (list 'n 0 'mu 0.0 'm2 0.0 'sd 0)
+                (o))
+            v)))
+
+(defmethod seen ((i cons) &optional (v '?))    ; num: Welford
+  (if (eq v '?) i
+      (let* ((k (1+ (n i)))
+             (d (- v (mu i)))
+             (m (+ (mu i) (/ d k)))
+             (q (+ (? i 'm2) (* d (- v m)))))
+        (list 'n k 'mu m 'm2 q
+              'sd (if (< k 2) 0 (sqrt (/ (max 0 q) (1- k))))))))
+
+(defmethod seen ((i hash-table) &optional (v '?))   ; sym: counts
+  (unless (eq v '?) (incf (? i v 0)))
+  i)
+
+(defun seens (l &optional i)          ; seen all of L
+  (dolist (v l i) (setf i (seen i v))))
 
 (defun norm (i v &aux (z (/ (- v (mu i)) (+ (sd i) 1e-32))))
   (/ 1 (+ 1 (exp (* -1.7 (max -3 (min 3 z)))))))
-
-(defmethod add+ ((i num) v &aux (d (- v (mu i))))   ; Welford
-  (incf (n i))
-  (incf (mu i) (/ d (n i)))
-  (incf (m2 i) (* d (- v (mu i)))) i)
-(defmethod add+ ((i hash-table) v) (incf (? i v 0)) i)
-
-(defun add  (i v) (if (eq v '?) i (add+ i v)))
-(defun adds (l &optional (i (num))) (dolist (v l i) (add i v)))
 
 ;;; ----- data ------------------------------------------------
 (defstruct (data (:conc-name) (:constructor %data))
@@ -47,16 +64,16 @@
 
 (defun data (src &aux (i (%data :names (pop src) :rows src)))
   (setf (cols i)
-        (map 'vector
-             (fn (if (lower-case-p (char $1 0)) (o) (num)))
-             (names i)))
+        (make-array (length (names i)) :initial-element nil))
   (loop for s across (names i) for at from 0
         for z = (char s (1- (length s)))
         if (find z "-+!")
           collect (cons at (if (eql z #\+) 1 0)) into y
         else if (char/= z #\X) collect at into x
         finally (setf (x i) x (y i) y))
-  (dolist (row (rows i) i) (map nil #'add (cols i) row)))
+  (dolist (row (rows i) i)
+    (loop for v across row for at from 0
+          do (setf (aref (cols i) at) (seen (col i at) v)))))
 
 (defun mink (l &optional (p (my p)))
   (expt (/ (loop for x in l sum (expt (abs x) p)) (length l))
@@ -68,7 +85,7 @@
 
 ;;; ----- cuts: a cut is a tree node with no `right` yet.
 ;;; nums: lo=nil, "v <= hi"; syms: lo=hi=v, "v == lo". --------
-(defmethod bin ((c num) v)
+(defmethod bin ((c cons) v)
   (floor (* (my bins) (norm c v))))
 (defmethod bin ((c hash-table) v) v)
 
@@ -84,16 +101,16 @@
           do (let* ((k (bin c v))
                     (b (or (? h k) (setf (? h k) (cons v nil)))))
                (push y (cdr b))
-               (setf (car b) (if (num-p c) (max (car b) v) v))))
+               (setf (car b) (if (consp c) (max (car b) v) v))))
   h)
 
 (defun cuts-at (c at rows ys &aux (h (bins c at rows ys)))
-  (if (num-p c)                      ; nums: cumulative from low
+  (if (consp c)                      ; nums: cumulative from low
       (loop for k in (butlast (sort (keys h) #'<))
             append (cdr (? h k)) into all
-            collect (cut at nil (car (? h k)) (adds all)))
+            collect (cut at nil (car (? h k)) (seens all)))
       (loop for k in (keys h)          ; syms: one cut per value
-            collect (cut at k k (adds (cdr (? h k)))))))
+            collect (cut at k k (seens (cdr (? h k)))))))
 
 (defun cuts (i rows y &aux (ys (mapcar y rows)))
   (loop for at in (x i) append (cuts-at (col i at) at rows ys)))
@@ -117,12 +134,13 @@
                 (loop for (bias r) in (grows kid y root (1+ d))
                       collect (list (cat bit bias)
                                     (list* 'right r cut)))))
-      (list (list "" (adds (mapcar y (rows i)))))))
+      (list (list "" (seens (mapcar y (rows i)))))))
 
 ;;; ----- use: predict, score, choose, print -------------------
-(defmethod predict ((tr num) row) (mu tr))
-(defmethod predict ((tr cons) row)
-  (predict (? tr (if (has tr row) 'left 'right)) row))
+(defun predict (tr row)              ; leaves are nums: no `at`
+  (if (? tr 'at)
+      (predict (? tr (if (has tr row) 'left 'right)) row)
+      (mu tr)))
 
 (defun err (tr lst y)
   (/ (loop for r in lst
@@ -135,8 +153,9 @@
                        (lo (? tr 'lo)) (hi (? tr 'hi)))
   (if lo (cat s " == " lo) (cat s " <= " hi)))
 
-(defmethod show (i (tr num))
-  (prn "~33a leaf  d2h ~,2f n=~d" "" (mu tr) (n tr)))
-(defmethod show (i (tr cons) &aux (l (? tr 'left)))
-  (prn "if ~30a then d2h ~,2f n=~d" (rule i tr) (mu l) (n l))
-  (show i (? tr 'right)))
+(defun show (i tr &aux (l (? tr 'left)))
+  (if (? tr 'at)
+      (progn (prn "if ~30a then d2h ~,2f n=~d"
+                  (rule i tr) (mu l) (n l))
+             (show i (? tr 'right)))
+      (prn "~33a leaf  d2h ~,2f n=~d" "" (mu tr) (n tr))))
