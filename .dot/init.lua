@@ -38,6 +38,14 @@ require("nvim-tree").setup({
 vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>")  -- toggle sidebar
 
 -- per-repo overrides (loaded last so they win). silent if missing.
+-- lisp: vim-style lisp indenting, plus this repo's kit words
+-- (fn let+ ...) indented as special forms
+vim.api.nvim_create_autocmd("FileType", { pattern = "lisp",
+  callback = function()
+    vim.opt_local.lisp = true
+    vim.opt_local.lispwords:append({ "fn", "let+", "defmethod", "loop" })
+  end })
+
 pcall(dofile, vim.fn.getcwd() .. "/init.local.lua")
 
 -- vim.o.termguicolors = true

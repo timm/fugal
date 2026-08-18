@@ -5,8 +5,7 @@
 ; def/def+/!/{} sugar; num/sym split via defmethod.
 ; (c) 2026 Tim Menzies timm@ieee.org, MIT license.
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (load "lithp.lisp"))           ; macros must exist at compile time too
+(load "lib.lisp")
 
 (defvar *settings*
   '((seed . 1234567891) (p . 2) (bins . 7) (depth . 4)
