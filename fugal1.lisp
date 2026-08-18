@@ -14,37 +14,42 @@
 ;;;; cut with the least (bit 0) or most (bit 1) mean y and
 ;;;; recurses on the rest, so depth d gives <= 2^d trees named
 ;;;; by their bits; `tune` keeps the lowest error. Trees and
-;;;; nums are both plists -- (at lo hi left right) for a node,
-;;;; (n mu m2 sd) for a leaf -- so a node is what has an `at`.
+;;;; nums are both plists -- (:at :lo :hi :left :right) for a
+;;;; node, (:n :mu :m2 :sd) for a leaf -- so a node has an :at.
 ;;;; Settings are a plist; -x V on the command line sets key x...
 (load (merge-pathnames "lib1.lisp" *load-truename*))
 
-(defvar *settings* '(seed 1234567891 p 2 bins 7 depth 4
-                     file "$MOOT/optimize/misc/auto93.csv"))
-(defmacro my (k) `(? *settings* ',k))            ; (my bins)
+(defvar *settings* '(:seed 1234567891 :p 2 :bins 7 :depth 4
+                     :file "$MOOT/optimize/misc/auto93.csv"))
+(defmacro my (k)                                 ; (my bins)
+  `(? *settings* ,(intern (string k) :keyword)))
 
 ;;; ----- columns ---------------------------------------------
-;;; nil is the empty column and `seen` returns a new one, so
-;;; callers store what they get back: (setf c (seen c v)).
-(defun n  (i) (? i 'n  0))
-(defun mu (i) (? i 'mu 0))
-(defun sd (i) (? i 'sd 0))
+;;; nil is the empty column, so callers store what they get
+;;; back: (setf c (seen c v)). Updates are in place, via getf
+;;; (`?` will not set a plist, since a missing key would want
+;;; to change the caller's variable; these keys all exist).
+(defun n  (i) (? i :n  0))
+(defun mu (i) (? i :mu 0))
+(defun sd (i) (? i :sd 0))
 
 (defmethod seen ((i null) &optional (v '?))    ; the first v
   (if (eq v '?) i                              ; says which
       (seen (if (numberp v)                    ; column to make
-                (list 'n 0 'mu 0.0 'm2 0.0 'sd 0)
+                (list :n 0 :mu 0.0 :m2 0.0 :sd 0)
                 (o))
             v)))
 
 (defmethod seen ((i cons) &optional (v '?))    ; num: Welford
-  (if (eq v '?) i
-      (let* ((k (1+ (n i)))
-             (d (- v (mu i)))
-             (m (+ (mu i) (/ d k)))
-             (q (+ (? i 'm2) (* d (- v m)))))
-        (list 'n k 'mu m 'm2 q
-              'sd (if (< k 2) 0 (sqrt (/ (max 0 q) (1- k))))))))
+  (unless (eq v '?)
+    (let* ((k (incf (getf i :n)))
+           (d (- v (mu i))))
+      (incf (getf i :mu) (/ d k))
+      (incf (getf i :m2) (* d (- v (mu i))))
+      (setf (getf i :sd)
+            (if (< k 2) 0
+                (sqrt (/ (max 0 (? i :m2)) (1- k)))))))
+  i)
 
 (defmethod seen ((i hash-table) &optional (v '?))   ; sym: counts
   (unless (eq v '?) (incf (? i v 0)))
@@ -89,10 +94,10 @@
   (floor (* (my bins) (norm c v))))
 (defmethod bin ((c hash-table) v) v)
 
-(defun cut (at lo hi ys) (list 'at at 'lo lo 'hi hi 'left ys))
+(defun cut (at lo hi ys) (list :at at :lo lo :hi hi :left ys))
 
-(defun has (cut row &aux (v  (elt row (? cut 'at)))
-                         (lo (? cut 'lo)) (hi (? cut 'hi)))
+(defun has (cut row &aux (v  (elt row (? cut :at)))
+                         (lo (? cut :lo)) (hi (? cut :hi)))
   (or (eq v '?) (if lo (equal v lo) (<= v hi))))
 
 (defun bins (c at rows ys &aux (h (o)))    ; k -> (hi . ys)
@@ -118,11 +123,11 @@
 ;;; ----- grow: split on least/most cut; each choice = a tree --
 (defun splits (i y root
                &aux (enough (expt (length (rows root)) .33)))
-  (let ((cs (remove-if (fn (<= (n (? $1 'left)) enough))
+  (let ((cs (remove-if (fn (<= (n (? $1 :left)) enough))
                        (cuts i (rows i) y))))
     (when cs
       (loop for (bit f) in '((0 least) (1 most))
-            for cut = (funcall f cs (fn (mu (? $1 'left))))
+            for cut = (funcall f cs (fn (mu (? $1 :left))))
             for no  = (remove-if (fn (has cut $1)) (rows i))
             when no collect (list bit cut no)))))
 
@@ -133,13 +138,13 @@
               append
                 (loop for (bias r) in (grows kid y root (1+ d))
                       collect (list (cat bit bias)
-                                    (list* 'right r cut)))))
+                                    (list* :right r cut)))))
       (list (list "" (seens (mapcar y (rows i)))))))
 
 ;;; ----- use: predict, score, choose, print -------------------
 (defun predict (tr row)              ; leaves are nums: no `at`
-  (if (? tr 'at)
-      (predict (? tr (if (has tr row) 'left 'right)) row)
+  (if (? tr :at)
+      (predict (? tr (if (has tr row) :left :right)) row)
       (mu tr)))
 
 (defun err (tr lst y)
@@ -149,13 +154,13 @@
 
 (defun tune (trees lst y) (least trees (fn (err $1 lst y))))
 
-(defun rule (i tr &aux (s  (elt (names i) (? tr 'at)))
-                       (lo (? tr 'lo)) (hi (? tr 'hi)))
+(defun rule (i tr &aux (s  (elt (names i) (? tr :at)))
+                       (lo (? tr :lo)) (hi (? tr :hi)))
   (if lo (cat s " == " lo) (cat s " <= " hi)))
 
-(defun show (i tr &aux (l (? tr 'left)))
-  (if (? tr 'at)
+(defun show (i tr &aux (l (? tr :left)))
+  (if (? tr :at)
       (progn (prn "if ~30a then d2h ~,2f n=~d"
                   (rule i tr) (mu l) (n l))
-             (show i (? tr 'right)))
+             (show i (? tr :right)))
       (prn "~33a leaf  d2h ~,2f n=~d" "" (mu tr) (n tr))))

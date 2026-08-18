@@ -75,7 +75,7 @@
   (let+ ((i (the-data)) (y (the-y i))
          (cs (cuts i (rows i) y)))
     (dolist (c (subseq cs 0 (min 5 (length cs))))
-      (prn "~a n=~a" (rule i c) (n (? c 'left))))
+      (prn "~a n=~a" (rule i c) (n (? c :left))))
     (prn "... ~a cuts" (length cs))
     (assert (> (length cs) 2))))
 
