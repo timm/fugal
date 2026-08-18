@@ -47,7 +47,7 @@ push: ## refresh .dot, commit everything (MSG=...), push
 	@$(MK) dot
 	@git -C $(TOP) add -A
 	@git -C $(TOP) diff-index --quiet HEAD -- || git -C $(TOP) commit -qm "$(MSG)"
-	@git -C $(TOP) push -q
+	@git -C $(TOP) push -q -u origin HEAD
 
 sh: ## bash tuned by .dot/bashrc; shows $(BANNER) if it exists
 	@here=$(TOP) dot=$(ME) BANNER=$(abspath $(BANNER)) bash --rcfile $(ME)/bashrc -i
