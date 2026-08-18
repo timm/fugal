@@ -1,9 +1,10 @@
 ; vim: set ft=lisp ts=2 sw=2 et :
-; lib1.lisp -- lib.lisp with one accessor `?` for plist,
-; hash and struct; settings are a plist so cli is trivial.
-; Kit (no reader macros):
+; lib1.lisp -- lib.lisp with one accessor `?` for plist, hash,
+; vector and struct; settings are a plist so cli is trivial.
+; Kit (one reader macro, $x):
 ;   (fn ...)             lambda; args are $1..$9 as used
-;   (? x k [d])          getf / gethash / slot-value; setf-able
+;   (? x k [d])          getf / gethash / aref / slot; setf-able
+;   $mu                  (? i :mu), when the receiver is `i`
 ;   (let+ ((x 1)                    var
 ;          ((a b) lst)              destructure
 ;          (f (z) (* z 2))) ...)    local function
@@ -22,6 +23,17 @@
 (defvar *seed* 1234567891)
 
 ;;; ----- the kit ----------------------------------------------
+;;; The one reader macro: $mu is (? i :mu), for code whose
+;;; receiver is `i`. Digits are left alone, so `fn` keeps its
+;;; $1..$9.
+(set-macro-character #\$
+  (lambda (s c)
+    (declare (ignore c))
+    (let ((x (read s t nil t)))
+      (if (symbolp x)
+          (list '? 'i (intern (string x) :keyword))
+          (intern (format nil "$~a" x))))))
+
 (defmacro fn (&body b)
   (let ((a (gensym)))
     `(lambda (&rest ,a)
@@ -45,20 +57,26 @@
           do (setf (gethash k h) v))
     h))
 
+(declaim (inline ? (setf ?)))   ; so $mu costs no more than
+                                ; the getf that it hides
 (defun ? (x k &optional d)
-  "Get K from X: plist (getf), hash (gethash), else slot.
-D is returned when K is absent (plist and hash only)."
+  "Get K from X: plist (getf), hash (gethash), integer key
+into a vector (aref), else slot. D is returned when K is
+absent (plist and hash only)."
   (cond ((listp x)        (getf x k d))
         ((hash-table-p x) (gethash k x d))
+        ((integerp k)     (aref x k))
         (t                (slot-value x k))))
 
 (defun (setf ?) (v x k &optional d)
-  "Set K in X: hash or struct (plists are treated as
-immutable; see `cli`, which returns a new one)."
+  "Set K in X: hash, vector, struct, or a plist key that is
+already there. A new plist key would have to grow the list,
+which only the caller's own variable can do; see `cli`."
   (declare (ignore d))
-  (if (hash-table-p x)
-      (setf (gethash k x) v)
-      (setf (slot-value x k) v)))
+  (cond ((listp x)        (setf (getf x k) v))
+        ((hash-table-p x) (setf (gethash k x) v))
+        ((integerp k)     (setf (aref x k) v))
+        (t                (setf (slot-value x k) v))))
 
 (defun keys (h)
   (loop for k being the hash-keys of h collect k))

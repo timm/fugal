@@ -26,12 +26,11 @@
 
 ;;; ----- columns ---------------------------------------------
 ;;; nil is the empty column, so callers store what they get
-;;; back: (setf c (seen c v)). Updates are in place, via getf
-;;; (`?` will not set a plist, since a missing key would want
-;;; to change the caller's variable; these keys all exist).
-(defun n  (i) (? i :n  0))
-(defun mu (i) (? i :mu 0))
-(defun sd (i) (? i :sd 0))
+;;; back: (setf c (seen c v)). After that the keys are all
+;;; there, so $mu -- i.e. (? i :mu) -- can write in place.
+(defun n  (i) $n)
+(defun mu (i) $mu)
+(defun sd (i) $sd)
 
 (defmethod seen ((i null) &optional (v '?))    ; the first v
   (if (eq v '?) i                              ; says which
@@ -42,13 +41,12 @@
 
 (defmethod seen ((i cons) &optional (v '?))    ; num: Welford
   (unless (eq v '?)
-    (let* ((k (incf (getf i :n)))
-           (d (- v (mu i))))
-      (incf (getf i :mu) (/ d k))
-      (incf (getf i :m2) (* d (- v (mu i))))
-      (setf (getf i :sd)
-            (if (< k 2) 0
-                (sqrt (/ (max 0 (? i :m2)) (1- k)))))))
+    (let ((d (- v $mu)))
+      (incf $n)
+      (incf $mu (/ d $n))
+      (incf $m2 (* d (- v $mu)))
+      (setf $sd (if (< $n 2) 0
+                    (sqrt (/ (max 0 $m2) (1- $n)))))))
   i)
 
 (defmethod seen ((i hash-table) &optional (v '?))   ; sym: counts
@@ -58,14 +56,14 @@
 (defun seens (l &optional i)          ; seen all of L
   (dolist (v l i) (setf i (seen i v))))
 
-(defun norm (i v &aux (z (/ (- v (mu i)) (+ (sd i) 1e-32))))
+(defun norm (i v &aux (z (/ (- v $mu) (+ $sd 1e-32))))
   (/ 1 (+ 1 (exp (* -1.7 (max -3 (min 3 z)))))))
 
 ;;; ----- data ------------------------------------------------
 (defstruct (data (:conc-name) (:constructor %data))
   names cols x y rows)
 
-(defun col (i at) (aref (cols i) at))
+(defun col (i at) (? (cols i) at))
 
 (defun data (src &aux (i (%data :names (pop src) :rows src)))
   (setf (cols i)
@@ -78,7 +76,7 @@
         finally (setf (x i) x (y i) y))
   (dolist (row (rows i) i)
     (loop for v across row for at from 0
-          do (setf (aref (cols i) at) (seen (col i at) v)))))
+          do (setf (? (cols i) at) (seen (col i at) v)))))
 
 (defun mink (l &optional (p (my p)))
   (expt (/ (loop for x in l sum (expt (abs x) p)) (length l))
