@@ -63,7 +63,7 @@ immutable; see `cli`, which returns a new one)."
 (defun keys (h)
   (loop for k being the hash-keys of h collect k))
 
-(defmacro end! (place x)        ; append x to tail of list in place
+(defmacro end! (place x)      ; append x to list in place
   `(setf ,place (nconc ,place (list ,x))))
 
 ;;; ----- little things ----------------------------------------
@@ -128,13 +128,13 @@ immutable; see `cli`, which returns a new one)."
 
 (defun cli (plist)
   "A new plist: PLIST with -x V from the command line
-applied, where x is the first letter of a key (-f file)."
+  applied, where x is the first letter of a key (-f file)."
   (loop for (k v) on plist by #'cddr
-        collect k
-        collect (or (loop for (f a) on (args)
-                          when (equal f (cat "-" (char (string-downcase k) 0)))
-                            return (thing a))
-                    v)))
+    collect k collect 
+    (or (loop for (f a) on (args)
+          when (equal f (cat "-" (char (string-downcase k) 0)))
+          return (thing a))
+        v)))
 
 ;;; ----- random ------------------------------------------------
 (defun rand (&optional (n 1))
